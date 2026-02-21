@@ -1,0 +1,23 @@
+CREATE DATABASE IF NOT EXISTS spelling_bee;
+USE spelling_bee;
+
+CREATE TABLE IF NOT EXISTS words (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    word VARCHAR(255) UNIQUE NOT NULL,
+    meaning TEXT,
+    pronunciation VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_word (word)
+);
+
+CREATE TABLE IF NOT EXISTS dictionary_entries (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    word VARCHAR(255) UNIQUE NOT NULL,
+    meaning TEXT,
+    pronunciation VARCHAR(255),
+    source VARCHAR(64) DEFAULT 'kaikki',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_dictionary_word (word)
+);
