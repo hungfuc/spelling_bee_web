@@ -1,0 +1,87 @@
+services:
+  tts:
+    build:
+      context: ./tts_service
+      dockerfile: Dockerfile
+    container_name: spelling_bee_tts_prod
+    environment:
+      MELO_LANGUAGE: ${MELO_LANGUAGE:-EN}
+      MELO_SPEAKER: ${MELO_SPEAKER:-EN-US}
+      MELO_SPEED: ${MELO_SPEED:-1.0}
+      MELO_DEVICE: ${MELO_DEVICE:-cpu}
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    container_name: spelling_bee_mysql_prod
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: spelling_bee
+    ports:
+      - "3366:3306"
+    volumes:
+      - mysql_data_prod:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: spelling_bee_backend_prod
+    environment:
+      DB_HOST: mysql
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_NAME: spelling_bee
+      PORT: 3001
+      TTS_SERVICE_URL: http://tts:8000
+    expose:
+      - "3001"
+    volumes:
+      - ./backend/data:/app/data:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      tts:
+        condition: service_started
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
+      args:
+        PUBLIC_API_URL: ""
+    container_name: spelling_bee_nginx_prod
+    ports:
+      - "8090:80"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  phpmyadmin:
+    image: phpmyadmin:5-apache
+    container_name: spelling_bee_phpmyadmin_prod
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: password
+    ports:
+      - "8091:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data_prod:
