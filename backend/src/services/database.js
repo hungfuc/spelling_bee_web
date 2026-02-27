@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 let missingDictionaryTableWarned = false;
+let ensureTagTablesPromise = null;
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
@@ -23,28 +24,146 @@ pool.getConnection()
 
 // Word operations
 const wordQueries = {
-  // Get all words with pagination
-  getAll: async (page = 1, limit = 50) => {
-    const offset = (page - 1) * limit;
-    const [rows] = await pool.execute(
-      'SELECT * FROM words ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
+  getTagsByWordIds: async (wordIds = []) => {
+    await ensureTagTables();
+
+    if (wordIds.length === 0) {
+      return new Map();
+    }
+
+    const placeholders = wordIds.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `
+      SELECT wt.word_id, t.id, t.name
+      FROM word_tags wt
+      JOIN tags t ON t.id = wt.tag_id
+      WHERE wt.word_id IN (${placeholders})
+      ORDER BY t.name ASC
+      `,
+      wordIds
     );
-    const [count] = await pool.execute('SELECT COUNT(*) as total FROM words');
+
+    const tagsByWordId = new Map();
+    for (const row of rows) {
+      if (!tagsByWordId.has(row.word_id)) {
+        tagsByWordId.set(row.word_id, []);
+      }
+      tagsByWordId.get(row.word_id).push({ id: row.id, name: row.name });
+    }
+
+    return tagsByWordId;
+  },
+
+  attachTags: async (words = []) => {
+    if (words.length === 0) {
+      return words;
+    }
+
+    const ids = words.map((word) => word.id);
+    const tagsByWordId = await wordQueries.getTagsByWordIds(ids);
+    return words.map((word) => ({
+      ...word,
+      tags: tagsByWordId.get(word.id) || []
+    }));
+  },
+
+  // Get all words with pagination
+  getAll: async (page = 1, limit = 50, tagIds = []) => {
+    await ensureTagTables();
+
+    const safePage = Number.isFinite(Number(page)) ? Math.max(1, parseInt(page, 10)) : 1;
+    const safeLimit = Number.isFinite(Number(limit)) ? Math.max(1, parseInt(limit, 10)) : 50;
+    const offset = (safePage - 1) * safeLimit;
+    let rows = [];
+    let total = 0;
+
+    if (tagIds.length > 0) {
+      const placeholders = tagIds.map(() => '?').join(', ');
+      const [filteredRows] = await pool.query(
+        `
+        SELECT w.*
+        FROM words w
+        JOIN word_tags wt ON wt.word_id = w.id
+        WHERE wt.tag_id IN (${placeholders})
+        GROUP BY w.id
+        HAVING COUNT(DISTINCT wt.tag_id) = ?
+        ORDER BY w.created_at DESC
+        LIMIT ? OFFSET ?
+        `,
+        [...tagIds, tagIds.length, safeLimit, offset]
+      );
+      rows = filteredRows;
+
+      const [count] = await pool.query(
+        `
+        SELECT COUNT(*) AS total
+        FROM (
+          SELECT w.id
+          FROM words w
+          JOIN word_tags wt ON wt.word_id = w.id
+          WHERE wt.tag_id IN (${placeholders})
+          GROUP BY w.id
+          HAVING COUNT(DISTINCT wt.tag_id) = ?
+        ) matched_words
+        `,
+        [...tagIds, tagIds.length]
+      );
+      total = count[0].total;
+    } else {
+      const [unfilteredRows] = await pool.query(
+        'SELECT * FROM words ORDER BY created_at DESC LIMIT ? OFFSET ?',
+        [safeLimit, offset]
+      );
+      rows = unfilteredRows;
+
+      const [count] = await pool.execute('SELECT COUNT(*) as total FROM words');
+      total = count[0].total;
+    }
+
+    const wordsWithTags = await wordQueries.attachTags(rows);
     return {
-      words: rows,
-      total: count[0].total,
-      page,
-      limit
+      words: wordsWithTags,
+      total,
+      page: safePage,
+      limit: safeLimit
     };
   },
 
   // Get random word
-  getRandom: async () => {
-    const [rows] = await pool.execute(
-      'SELECT * FROM words ORDER BY RAND() LIMIT 1'
-    );
-    return rows[0] || null;
+  getRandom: async (tagIds = []) => {
+    await ensureTagTables();
+
+    let word = null;
+
+    if (tagIds.length > 0) {
+      const placeholders = tagIds.map(() => '?').join(', ');
+      const [rows] = await pool.query(
+        `
+        SELECT w.*
+        FROM words w
+        JOIN word_tags wt ON wt.word_id = w.id
+        WHERE wt.tag_id IN (${placeholders})
+        GROUP BY w.id
+        HAVING COUNT(DISTINCT wt.tag_id) = ?
+        ORDER BY RAND()
+        LIMIT 1
+        `,
+        [...tagIds, tagIds.length]
+      );
+      word = rows[0] || null;
+    } else {
+      const [rows] = await pool.execute(
+        'SELECT * FROM words ORDER BY RAND() LIMIT 1'
+      );
+      word = rows[0] || null;
+    }
+
+    if (!word) {
+      return null;
+    }
+
+    const [wordWithTags] = await wordQueries.attachTags([word]);
+    return wordWithTags || null;
   },
 
   // Get word by ID
@@ -53,7 +172,11 @@ const wordQueries = {
       'SELECT * FROM words WHERE id = ?',
       [id]
     );
-    return rows[0] || null;
+    if (!rows[0]) {
+      return null;
+    }
+    const [word] = await wordQueries.attachTags([rows[0]]);
+    return word || null;
   },
 
   // Get word by word text
@@ -62,7 +185,11 @@ const wordQueries = {
       'SELECT * FROM words WHERE word = ?',
       [word]
     );
-    return rows[0] || null;
+    if (!rows[0]) {
+      return null;
+    }
+    const [wordWithTags] = await wordQueries.attachTags([rows[0]]);
+    return wordWithTags || null;
   },
 
   // Create word
@@ -119,8 +246,103 @@ const wordQueries = {
       [id]
     );
     return result.affectedRows > 0;
+  },
+
+  addTags: async (wordId, tagIds = []) => {
+    if (!tagIds.length) {
+      return 0;
+    }
+
+    const values = tagIds.map((tagId) => [wordId, tagId]);
+    const [result] = await pool.query(
+      'INSERT IGNORE INTO word_tags (word_id, tag_id) VALUES ?',
+      [values]
+    );
+    return result.affectedRows;
   }
 };
+
+const tagQueries = {
+  normalizeTagName: (name) => name.trim().toLowerCase(),
+
+  getAll: async () => {
+    await ensureTagTables();
+
+    const [rows] = await pool.execute(
+      `
+      SELECT t.id, t.name, COUNT(wt.word_id) AS wordCount
+      FROM tags t
+      LEFT JOIN word_tags wt ON wt.tag_id = t.id
+      GROUP BY t.id
+      ORDER BY t.name ASC
+      `
+    );
+    return rows;
+  },
+
+  ensureTags: async (tagNames = []) => {
+    await ensureTagTables();
+
+    const cleanedNames = [...new Set(
+      tagNames
+        .map((name) => (typeof name === 'string' ? tagQueries.normalizeTagName(name) : ''))
+        .filter(Boolean)
+    )];
+
+    if (!cleanedNames.length) {
+      return [];
+    }
+
+    const values = cleanedNames.map((name) => [name]);
+    await pool.query(
+      'INSERT IGNORE INTO tags (name) VALUES ?',
+      [values]
+    );
+
+    const placeholders = cleanedNames.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT id, name FROM tags WHERE name IN (${placeholders})`,
+      cleanedNames
+    );
+    return rows;
+  }
+};
+
+async function ensureTagTables() {
+  if (!ensureTagTablesPromise) {
+    ensureTagTablesPromise = (async () => {
+      await pool.execute(
+        `
+        CREATE TABLE IF NOT EXISTS tags (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          name VARCHAR(100) UNIQUE NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        `
+      );
+      await pool.execute(
+        `
+        CREATE TABLE IF NOT EXISTS word_tags (
+          word_id INT NOT NULL,
+          tag_id INT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (word_id, tag_id),
+          CONSTRAINT fk_word_tags_word
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+          CONSTRAINT fk_word_tags_tag
+            FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE,
+          INDEX idx_word_tags_tag_id (tag_id)
+        )
+        `
+      );
+    })().catch((error) => {
+      ensureTagTablesPromise = null;
+      throw error;
+    });
+  }
+
+  return ensureTagTablesPromise;
+}
 
 const dictionaryQueries = {
   getByWord: async (word) => {
@@ -171,5 +393,6 @@ const dictionaryQueries = {
 module.exports = {
   pool,
   wordQueries,
+  tagQueries,
   dictionaryQueries
 };

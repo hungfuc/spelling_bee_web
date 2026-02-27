@@ -3,7 +3,8 @@ const multer = require('multer');
 const router = express.Router();
 const tokenizer = require('../services/tokenizer');
 const dictionaryService = require('../services/dictionary');
-const { wordQueries } = require('../services/database');
+const { wordQueries, tagQueries } = require('../services/database');
+const { requireUploadToken } = require('../middleware/tokens');
 
 // Configure multer for file uploads
 const upload = multer({
@@ -22,7 +23,7 @@ const upload = multer({
 });
 
 // Upload and process text file
-router.post('/', upload.single('file'), async (req, res, next) => {
+router.post('/', requireUploadToken, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -35,6 +36,18 @@ router.post('/', upload.single('file'), async (req, res, next) => {
       return res.status(400).json({ error: 'No words found in file' });
     }
 
+    let rawTags = [];
+    if (req.body.tags) {
+      try {
+        rawTags = JSON.parse(req.body.tags);
+      } catch (parseError) {
+        return res.status(400).json({ error: 'Invalid tags payload. Expected a JSON array of strings.' });
+      }
+    }
+    const tagNames = Array.isArray(rawTags) ? rawTags : [];
+    const ensuredTags = await tagQueries.ensureTags(tagNames);
+    const tagIds = ensuredTags.map((tag) => tag.id);
+
     // Process words: fetch meanings and pronunciations
     const processedWords = [];
     let successCount = 0;
@@ -45,10 +58,12 @@ router.post('/', upload.single('file'), async (req, res, next) => {
         // Check if word already exists
         const existingWord = await wordQueries.getByWord(word);
         if (existingWord) {
+          await wordQueries.addTags(existingWord.id, tagIds);
           processedWords.push({
             word,
             meaning: existingWord.meaning,
             pronunciation: existingWord.pronunciation,
+            tags: ensuredTags,
             status: 'exists'
           });
           continue;
@@ -61,22 +76,26 @@ router.post('/', upload.single('file'), async (req, res, next) => {
           word,
           meaning: dictData?.meaning || null,
           pronunciation: dictData?.pronunciation || null,
+          tags: ensuredTags,
           status: dictData ? 'success' : 'no_data'
         });
 
         // Insert into database
-        await wordQueries.create(word, dictData?.meaning || null, dictData?.pronunciation || null);
+        const wordId = await wordQueries.create(word, dictData?.meaning || null, dictData?.pronunciation || null);
+        await wordQueries.addTags(wordId, tagIds);
         successCount++;
       } catch (error) {
         console.error(`Error processing word "${word}":`, error.message);
         errorCount++;
         // Still insert word without meaning/pronunciation
         try {
-          await wordQueries.create(word, null, null);
+          const wordId = await wordQueries.create(word, null, null);
+          await wordQueries.addTags(wordId, tagIds);
           processedWords.push({
             word,
             meaning: null,
             pronunciation: null,
+            tags: ensuredTags,
             status: 'error'
           });
         } catch (dbError) {
@@ -91,6 +110,7 @@ router.post('/', upload.single('file'), async (req, res, next) => {
       processed: processedWords.length,
       successCount,
       errorCount,
+      tags: ensuredTags,
       words: processedWords
     });
   } catch (error) {

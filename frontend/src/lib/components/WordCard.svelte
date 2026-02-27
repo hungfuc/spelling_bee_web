@@ -1,24 +1,57 @@
 <script>
+	import { createEventDispatcher } from 'svelte';
 	import { wordsAPI } from '$lib/api';
-	import { onMount } from 'svelte';
 
 	export let word = null;
+	export let testToken = '';
+	export let quizMode = false;
 
 	let flipped = false;
 	let showingMeaning = false;
 	let meaning = null;
 	let loadingMeaning = false;
+	let speaking = false;
+	let activeAudioUrl = null;
+	let activeAudio = null;
+	let answerInput = '';
+	let answerResult = null;
+	let answerSubmitted = false;
+	const dispatch = createEventDispatcher();
 
-	function speak() {
+	async function speak() {
 		if (!word || !word.word) return;
+		if (!testToken.trim()) {
+			alert('Missing test token for speech');
+			return;
+		}
 
-		if ('speechSynthesis' in window) {
-			const utterance = new SpeechSynthesisUtterance(word.word);
-			utterance.lang = 'en-US';
-			utterance.rate = 0.8;
-			speechSynthesis.speak(utterance);
-		} else {
-			alert('Speech synthesis is not supported in your browser');
+		if (speaking) {
+			return;
+		}
+
+		speaking = true;
+		try {
+			const response = await wordsAPI.textToSpeech(word.word, testToken);
+			const blob = new Blob([response.data], { type: response.data?.type || 'audio/wav' });
+
+			if (activeAudio) {
+				activeAudio.pause();
+				activeAudio = null;
+			}
+			if (activeAudioUrl) {
+				URL.revokeObjectURL(activeAudioUrl);
+				activeAudioUrl = null;
+			}
+
+			activeAudioUrl = URL.createObjectURL(blob);
+			activeAudio = new Audio(activeAudioUrl);
+			activeAudio.onended = () => {
+				speaking = false;
+			};
+			await activeAudio.play();
+		} catch (error) {
+			speaking = false;
+			alert('Failed to play pronunciation audio');
 		}
 	}
 
@@ -28,6 +61,29 @@
 
 	function hideAnswer() {
 		flipped = false;
+	}
+
+	function normalizeAnswer(value) {
+		return String(value || '').trim().toLowerCase();
+	}
+
+	function submitAnswer() {
+		if (!word || !word.word) return;
+		if (answerSubmitted) return;
+
+		const userAnswer = normalizeAnswer(answerInput);
+		if (!userAnswer) {
+			answerResult = null;
+			return;
+		}
+		const correctWord = normalizeAnswer(word.word);
+		answerResult = userAnswer === correctWord ? 'correct' : 'incorrect';
+		answerSubmitted = true;
+		dispatch('answerSubmit', {
+			isCorrect: answerResult === 'correct',
+			answer: answerInput,
+			word: word.word
+		});
 	}
 
 	async function showMeaning() {
@@ -64,6 +120,18 @@
 		flipped = false;
 		showingMeaning = false;
 		meaning = null;
+		speaking = false;
+		answerInput = '';
+		answerResult = null;
+		answerSubmitted = false;
+		if (activeAudio) {
+			activeAudio.pause();
+			activeAudio = null;
+		}
+		if (activeAudioUrl) {
+			URL.revokeObjectURL(activeAudioUrl);
+			activeAudioUrl = null;
+		}
 	}
 
 	// Reset when word changes
@@ -80,15 +148,39 @@
 					<div class="word-hidden">
 						<div class="hidden-indicator">?</div>
 						<p class="hint">Click "Show Answer" to reveal the word</p>
+						<div class="answer-input-group">
+							<input
+								type="text"
+								placeholder="Type your answer"
+								bind:value={answerInput}
+								disabled={answerSubmitted}
+								on:keydown={(event) => event.key === 'Enter' && submitAnswer()}
+							/>
+							<button class="btn-submit" on:click={submitAnswer} disabled={answerSubmitted}>Submit</button>
+						</div>
+						{#if answerResult === 'correct'}
+							<p class="answer-feedback correct">Correct</p>
+						{:else if answerResult === 'incorrect'}
+							<p class="answer-feedback incorrect">Incorrect</p>
+						{/if}
 					</div>
 					<div class="card-actions">
-						<button class="btn-speak" on:click={speak}>
-							🔊 Speak
+						<button class="btn-speak" on:click={speak} disabled={speaking}>
+							{speaking ? '🔊 Playing...' : '🔊 Speak'}
 						</button>
 						<button class="btn-show" on:click={showAnswer}>
 							👁️ Show Answer
 						</button>
+						<button class="btn-meaning" on:click={showMeaning} disabled={loadingMeaning}>
+							{loadingMeaning ? 'Loading...' : showingMeaning ? 'Hide Meaning' : '📖 Meaning'}
+						</button>
 					</div>
+					{#if showingMeaning}
+						<div class="meaning-section">
+							<h3>Meaning:</h3>
+							<p class="meaning-text">{meaning || 'Meaning not available'}</p>
+						</div>
+					{/if}
 				</div>
 			</div>
 			<div class="card-back">
@@ -100,17 +192,19 @@
 						{/if}
 					</div>
 					<div class="card-actions">
-						<button class="btn-speak" on:click={speak}>
-							🔊 Speak
+						<button class="btn-speak" on:click={speak} disabled={speaking}>
+							{speaking ? '🔊 Playing...' : '🔊 Speak'}
 						</button>
 						<button class="btn-hide" on:click={hideAnswer}>
 							🔙 Hide Answer
 						</button>
-						<button class="btn-meaning" on:click={showMeaning} disabled={loadingMeaning}>
-							{loadingMeaning ? 'Loading...' : showingMeaning ? 'Hide Meaning' : '📖 Meaning'}
-						</button>
+						{#if !quizMode}
+							<button class="btn-meaning" on:click={showMeaning} disabled={loadingMeaning}>
+								{loadingMeaning ? 'Loading...' : showingMeaning ? 'Hide Meaning' : '📖 Meaning'}
+							</button>
+						{/if}
 					</div>
-					{#if showingMeaning}
+					{#if showingMeaning && !quizMode}
 						<div class="meaning-section">
 							<h3>Meaning:</h3>
 							<p class="meaning-text">{meaning || 'Meaning not available'}</p>
@@ -187,6 +281,34 @@
 	.hint {
 		color: #666;
 		font-size: 1rem;
+	}
+
+	.answer-input-group {
+		width: 100%;
+		display: flex;
+		gap: 0.5rem;
+		margin-top: 1rem;
+	}
+
+	.answer-input-group input {
+		flex: 1;
+		padding: 0.75rem;
+		border: 1px solid #ccc;
+		border-radius: 8px;
+		font-size: 1rem;
+	}
+
+	.answer-feedback {
+		margin-top: 0.75rem;
+		font-weight: 700;
+	}
+
+	.answer-feedback.correct {
+		color: #2f855a;
+	}
+
+	.answer-feedback.incorrect {
+		color: #c53030;
 	}
 
 	.word-revealed {
@@ -270,6 +392,18 @@
 
 	.btn-meaning:hover:not(:disabled) {
 		background: #805ad5;
+		transform: translateY(-2px);
+	}
+
+	.btn-submit {
+		background: #2b6cb0;
+		color: white;
+		min-width: 100px;
+		flex: 0;
+	}
+
+	.btn-submit:hover {
+		background: #2c5282;
 		transform: translateY(-2px);
 	}
 

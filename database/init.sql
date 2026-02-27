@@ -21,3 +21,21 @@ CREATE TABLE IF NOT EXISTS dictionary_entries (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_dictionary_word (word)
 );
+
+CREATE TABLE IF NOT EXISTS tags (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS word_tags (
+    word_id INT NOT NULL,
+    tag_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (word_id, tag_id),
+    CONSTRAINT fk_word_tags_word
+        FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+    CONSTRAINT fk_word_tags_tag
+        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE,
+    INDEX idx_word_tags_tag_id (tag_id)
+);

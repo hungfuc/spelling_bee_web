@@ -4,134 +4,146 @@ A web application for practicing spelling with words imported from text files. B
 
 ## Features
 
-1. **Text File Import**: Upload a text file and automatically tokenize it into words
-2. **Automatic Word Processing**: Words are automatically enriched with meanings and pronunciations from a local dictionary dataset (Kaikki/Wiktionary)
-3. **Spelling Bee Test**: Interactive card-based test interface with:
-   - Hidden word display (covered initially)
-   - Text-to-speech pronunciation
-   - Answer reveal (card flip animation)
-   - Word meaning display
+1. Text file import and tokenization
+2. Automatic meaning/pronunciation enrichment from local Kaikki/Wiktionary dictionary data
+3. Multiple tags can be added during file upload
+4. Random spelling test words can be filtered by selected tags
+5. Interactive test card with speech and reveal controls (MeloTTS local service)
 
 ## Tech Stack
 
-- **Frontend**: SvelteKit
-- **Backend**: Node.js + Express
-- **Database**: MySQL 8.0
-- **Containerization**: Docker Compose
-- **Data Sources**: Kaikki/Wiktionary dictionary data, Web Speech API
+- Frontend: SvelteKit
+- Backend: Node.js + Express
+- Database: MySQL 8.0
+- Containerization: Docker Compose
 
 ## Project Structure
 
+```text
+spelling_bee_web/
+├── frontend/
+├── backend/
+├── database/
+├── nginx/
+├── docker-compose.yml
+├── docker-compose-prod.yml
+└── deploy-prod.sh
 ```
-spelling_bee/
-├── frontend/          # SvelteKit application
-├── backend/           # Express API server
-├── database/          # Database initialization scripts
-└── docker-compose.yml # Docker orchestration
+
+## Getting Started (Development)
+
+1. Start dev stack:
+
+```bash
+docker compose up --build
 ```
 
-## Getting Started
+2. Access services:
+- App (Nginx): http://localhost:8088
+- Backend API: http://localhost:3001
+- MySQL: localhost:3366
+- phpMyAdmin: http://localhost:8091
 
-### Prerequisites
+## Usage
 
-- Docker and Docker Compose installed
-- Git (optional)
+1. Import words:
+- Go to `/`
+- Upload a `.txt` file
+- Optionally add multiple tags before upload
 
-### Installation
-
-1. Clone or download this repository
-
-2. Start the application:
-   ```bash
-   docker-compose up --build
-   ```
-
-3. Access the application:
-   - App (Nginx): http://localhost:8088
-   - Backend API: http://localhost:3001
-   - MySQL: localhost:3366
-   - phpMyAdmin: http://localhost:8090
-
-### Usage
-
-1. **Import Words**:
-   - Go to the home page
-   - Upload a `.txt` file containing text
-   - The system will automatically:
-     - Extract all words
-     - Fetch meanings from local dictionary data
-     - Store pronunciations
-     - Save everything to the database
-
-2. **Take a Test**:
-   - Navigate to the "Test" page
-   - A random word will be displayed on a card (hidden initially)
-   - Use the buttons to:
-     - **Speak**: Hear the word pronounced
-     - **Show Answer**: Reveal the word
-     - **Meaning**: View the word's definition
-   - Click "Next Word" to get a new random word
+2. Take test:
+- Go to `/test`
+- Optionally select tags to filter test words
+- Click Next Word for another random word in the current filter
 
 ## API Endpoints
 
-- `POST /api/upload` - Upload text file
-- `GET /api/words` - List all words (with pagination)
-- `GET /api/words/random` - Get random word
+- `POST /api/upload` - Upload text file (`multipart/form-data`) with optional `tags` JSON array (requires upload token in `x-access-token`)
+- `GET /api/words` - List words (`page`, `limit`, optional `tagIds=1,2`)
+- `GET /api/words/random` - Random word (optional `tagIds=1,2`, requires test token in `x-access-token`)
+- `GET /api/words/tags` - List all tags with word counts (requires test token in `x-access-token`)
+- `POST /api/words/tts` - Generate pronunciation audio from MeloTTS service (requires test token in `x-access-token`)
 - `GET /api/words/:id` - Get word by ID
 - `POST /api/words` - Create word manually
 - `PUT /api/words/:id` - Update word
 - `DELETE /api/words/:id` - Delete word
 
+## Production Deployment
+
+Use the production compose file with compiled frontend assets:
+
+```bash
+docker compose -f docker-compose-prod.yml up -d --build
+```
+
+Or run the deployment script:
+
+```bash
+./deploy-prod.sh
+```
+
+Production ports:
+- Frontend Nginx: http://localhost:8090
+- phpMyAdmin: http://localhost:8091
+- MySQL: localhost:3366
+
+## Production Nginx Config
+
+`nginx/prod.conf`:
+
+```nginx
+server {
+  listen 80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+  client_max_body_size 20m;
+
+  location /api/ {
+    proxy_pass http://backend:3001/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}
+```
+
 ## Environment Variables
 
-### Backend
-- `DB_HOST` - MySQL host (default: mysql)
-- `DB_USER` - MySQL user (default: root)
-- `DB_PASSWORD` - MySQL password (default: password)
-- `DB_NAME` - Database name (default: spelling_bee)
-- `PORT` - Backend port (default: 3001)
+## Token Configuration
 
-### Frontend
-- `PUBLIC_API_URL` - Backend API URL (default: http://localhost:3001)
+Set tokens in `backend/config.json`:
 
-## Development
-
-### Backend Development
-```bash
-cd backend
-npm install
-npm run dev
+```json
+{
+  "uploadToken": "your-upload-token",
+  "testToken": "your-test-token"
+}
 ```
 
-### Load Local Dictionary Data (Kaikki)
-1. Download an English Kaikki JSONL file and save it at:
-   - `backend/data/kaikki-en.jsonl`
-2. Ensure containers are running:
-   ```bash
-   docker compose up -d
-   ```
-3. Create dictionary table for existing DBs (one-time, if DB already existed before this change):
-   ```bash
-   docker compose exec mysql mysql -uroot -ppassword spelling_bee -e "CREATE TABLE IF NOT EXISTS dictionary_entries (id BIGINT PRIMARY KEY AUTO_INCREMENT, word VARCHAR(255) UNIQUE NOT NULL, meaning TEXT, pronunciation VARCHAR(255), source VARCHAR(64) DEFAULT 'kaikki', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, INDEX idx_dictionary_word (word));"
-   ```
-4. Import data:
-   ```bash
-   docker compose exec backend npm run import:dictionary
-   ```
+Backend:
+- `DB_HOST` (default: `mysql`)
+- `DB_USER` (default: `root`)
+- `DB_PASSWORD` (default: `password`)
+- `DB_NAME` (default: `spelling_bee`)
+- `PORT` (default: `3001`)
+- `TTS_SERVICE_URL` (default: `http://tts:8000`)
 
-### Frontend Development
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Frontend:
+- `PUBLIC_API_URL` (default: empty, so requests use `/api`)
 
-## Notes
-
-- Dictionary meanings/pronunciations are loaded from local Kaikki data into MySQL
-- Web Speech API works on localhost and HTTPS-enabled sites
-- Words are stored with unique constraints to prevent duplicates
-- The application handles API failures gracefully and continues processing
+TTS service (Compose env vars):
+- `MELO_LANGUAGE` (default: `EN`)
+- `MELO_SPEAKER` (default: `EN-US`)
+- `MELO_SPEED` (default: `1.0`)
+- `MELO_DEVICE` (default: `cpu`)
 
 ## License
 

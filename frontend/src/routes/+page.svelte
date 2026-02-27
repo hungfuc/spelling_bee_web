@@ -1,15 +1,13 @@
 <script>
-	import { uploadAPI, wordsAPI } from '$lib/api';
-	import { onMount } from 'svelte';
+	import { uploadAPI } from '$lib/api';
 
 	let fileInput;
 	let selectedFile = null;
 	let uploading = false;
 	let uploadResult = null;
-	let words = [];
-	let loading = false;
-	let page = 1;
-	let total = 0;
+	let tagInput = '';
+	let selectedTags = [];
+	let uploadToken = '';
 
 	function handleFileSelect(event) {
 		const file = event.target.files[0];
@@ -18,9 +16,38 @@
 		}
 	}
 
+	function normalizeTag(rawTag) {
+		return rawTag.trim().toLowerCase();
+	}
+
+	function addTag(rawTag = tagInput) {
+		const normalizedTag = normalizeTag(rawTag);
+		if (!normalizedTag || selectedTags.includes(normalizedTag)) {
+			tagInput = '';
+			return;
+		}
+		selectedTags = [...selectedTags, normalizedTag];
+		tagInput = '';
+	}
+
+	function removeTag(tagToRemove) {
+		selectedTags = selectedTags.filter((tag) => tag !== tagToRemove);
+	}
+
+	function handleTagKeydown(event) {
+		if (event.key === 'Enter' || event.key === ',') {
+			event.preventDefault();
+			addTag();
+		}
+	}
+
 	async function handleUpload() {
 		if (!selectedFile) {
 			alert('Please select a file');
+			return;
+		}
+		if (!uploadToken.trim()) {
+			alert('Please enter upload token');
 			return;
 		}
 
@@ -28,15 +55,14 @@
 		uploadResult = null;
 
 		try {
-			const response = await uploadAPI.uploadFile(selectedFile);
+			const response = await uploadAPI.uploadFile(selectedFile, selectedTags, uploadToken);
 			uploadResult = {
 				success: true,
 				data: response.data
 			};
 			selectedFile = null;
+			selectedTags = [];
 			fileInput.value = '';
-			// Refresh words list
-			loadWords();
 		} catch (error) {
 			uploadResult = {
 				success: false,
@@ -47,22 +73,6 @@
 		}
 	}
 
-	async function loadWords() {
-		loading = true;
-		try {
-			const response = await wordsAPI.getAll(page);
-			words = response.data.words;
-			total = response.data.total;
-		} catch (error) {
-			console.error('Error loading words:', error);
-		} finally {
-			loading = false;
-		}
-	}
-
-	onMount(() => {
-		loadWords();
-	});
 </script>
 
 <div class="page-container">
@@ -81,7 +91,43 @@
 			{#if selectedFile}
 				<p class="file-name">Selected: {selectedFile.name}</p>
 			{/if}
-			<button on:click={handleUpload} disabled={uploading || !selectedFile}>
+
+			<div class="tag-input-section">
+				<label for="upload-token">Upload Token:</label>
+				<input
+					id="upload-token"
+					type="password"
+					placeholder="Enter upload token"
+					bind:value={uploadToken}
+					disabled={uploading}
+				/>
+
+				<label for="tag-input">Tags (optional, multiple):</label>
+				<div class="tag-input-row">
+					<input
+						id="tag-input"
+						type="text"
+						placeholder="e.g. grade-3, week-1"
+						bind:value={tagInput}
+						on:keydown={handleTagKeydown}
+						disabled={uploading}
+					/>
+					<button class="btn-secondary" on:click={() => addTag()} disabled={uploading || !tagInput.trim()}>
+						Add Tag
+					</button>
+				</div>
+				{#if selectedTags.length > 0}
+					<div class="tag-chips">
+						{#each selectedTags as tag (tag)}
+							<button class="tag-chip" on:click={() => removeTag(tag)} disabled={uploading}>
+								{tag} ×
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<button on:click={handleUpload} disabled={uploading || !selectedFile || !uploadToken.trim()}>
 				{uploading ? 'Uploading...' : 'Upload & Process'}
 			</button>
 		</div>
@@ -92,6 +138,9 @@
 					<h3>Upload Successful!</h3>
 					<p>Processed {uploadResult.data.totalWords} words</p>
 					<p>Successfully imported: {uploadResult.data.successCount}</p>
+					{#if uploadResult.data.tags?.length > 0}
+						<p>Tags: {uploadResult.data.tags.map((tag) => tag.name).join(', ')}</p>
+					{/if}
 					{#if uploadResult.data.errorCount > 0}
 						<p>Errors: {uploadResult.data.errorCount}</p>
 					{/if}
@@ -103,28 +152,6 @@
 		{/if}
 	</div>
 
-	<div class="card">
-		<h2>Imported Words ({total})</h2>
-		{#if loading}
-			<p>Loading words...</p>
-		{:else if words.length === 0}
-			<p>No words imported yet. Upload a text file to get started!</p>
-		{:else}
-			<div class="words-list">
-				{#each words as word (word.id)}
-					<div class="word-item">
-						<span class="word-text">{word.word}</span>
-						{#if word.pronunciation}
-							<span class="pronunciation">/{word.pronunciation}/</span>
-						{/if}
-						{#if word.meaning}
-							<span class="meaning">{word.meaning}</span>
-						{/if}
-					</div>
-				{/each}
-			</div>
-		{/if}
-	</div>
 </div>
 
 <style>
@@ -192,6 +219,73 @@
 		cursor: not-allowed;
 	}
 
+	.btn-secondary {
+		background: #4a5568;
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: #2d3748;
+	}
+
+	.tag-input-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.tag-input-section label {
+		font-weight: 500;
+		color: #4a5568;
+	}
+
+	.tag-input-row {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.tag-input-row input {
+		flex: 1;
+		padding: 0.75rem;
+		border: 1px solid #cbd5e0;
+		border-radius: 8px;
+	}
+
+	.tag-input-section > input {
+		padding: 0.75rem;
+		border: 1px solid #cbd5e0;
+		border-radius: 8px;
+	}
+
+	.tag-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.tag-chip {
+		padding: 0.4rem 0.75rem;
+		font-size: 0.85rem;
+		background: #edf2f7;
+		color: #2d3748;
+	}
+
+	.word-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	.word-tag {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.2rem 0.6rem;
+		border-radius: 999px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		background: #e6fffa;
+		color: #234e52;
+	}
+
 	.result {
 		margin-top: 1.5rem;
 		padding: 1rem;
@@ -214,36 +308,4 @@
 		margin-top: 0;
 	}
 
-	.words-list {
-		display: grid;
-		gap: 1rem;
-		max-height: 500px;
-		overflow-y: auto;
-	}
-
-	.word-item {
-		padding: 1rem;
-		background: #f8f9ff;
-		border-radius: 8px;
-		border-left: 4px solid #667eea;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.word-text {
-		font-weight: 600;
-		font-size: 1.1rem;
-		color: #333;
-	}
-
-	.pronunciation {
-		color: #667eea;
-		font-style: italic;
-	}
-
-	.meaning {
-		color: #666;
-		font-size: 0.9rem;
-	}
 </style>

@@ -10,16 +10,46 @@ const api = axios.create({
   }
 });
 
+function tokenHeaders(token) {
+  const normalized = String(token || '').trim();
+  return normalized ? { 'x-access-token': normalized } : {};
+}
+
 // Words API
 export const wordsAPI = {
   // Get all words
-  getAll: (page = 1, limit = 50) => {
-    return api.get('/words', { params: { page, limit } });
+  getAll: (page = 1, limit = 50, tagIds = [], token = '') => {
+    const params = { page, limit };
+    if (Array.isArray(tagIds) && tagIds.length > 0) {
+      params.tagIds = tagIds.join(',');
+    }
+    return api.get('/words', { params, headers: tokenHeaders(token) });
+  },
+
+  // Get all tags
+  getTags: (token = '') => {
+    return api.get('/words/tags', { headers: tokenHeaders(token) });
   },
 
   // Get random word
-  getRandom: () => {
-    return api.get('/words/random');
+  getRandom: (tagIds = [], token = '') => {
+    const params = {};
+    if (Array.isArray(tagIds) && tagIds.length > 0) {
+      params.tagIds = tagIds.join(',');
+    }
+    return api.get('/words/random', { params, headers: tokenHeaders(token) });
+  },
+
+  // Generate speech audio via backend TTS service
+  textToSpeech: (text, token = '') => {
+    return api.post(
+      '/words/tts',
+      { text },
+      {
+        headers: tokenHeaders(token),
+        responseType: 'blob'
+      }
+    );
   },
 
   // Get word by ID
@@ -46,12 +76,14 @@ export const wordsAPI = {
 // Upload API
 export const uploadAPI = {
   // Upload text file
-  uploadFile: (file) => {
+  uploadFile: (file, tags = [], token = '') => {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('tags', JSON.stringify(tags));
     return api.post('/upload', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data'
+        'Content-Type': 'multipart/form-data',
+        ...tokenHeaders(token)
       }
     });
   }

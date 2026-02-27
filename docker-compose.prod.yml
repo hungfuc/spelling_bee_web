@@ -1,6 +1,18 @@
-version: '3.8'
-
 services:
+  tts:
+    build:
+      context: ./tts_service
+      dockerfile: Dockerfile
+    container_name: spelling_bee_tts_prod
+    environment:
+      MELO_LANGUAGE: ${MELO_LANGUAGE:-EN}
+      MELO_SPEAKER: ${MELO_SPEAKER:-EN-US}
+      MELO_SPEED: ${MELO_SPEED:-1.0}
+      MELO_DEVICE: ${MELO_DEVICE:-cpu}
+    expose:
+      - "8000"
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.0
     container_name: spelling_bee_mysql_prod
@@ -30,6 +42,7 @@ services:
       DB_PASSWORD: password
       DB_NAME: spelling_bee
       PORT: 3001
+      TTS_SERVICE_URL: http://tts:8000
     expose:
       - "3001"
     volumes:
@@ -37,32 +50,22 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      tts:
+        condition: service_started
     restart: unless-stopped
 
-  frontend-build:
-    image: node:18-alpine
-    container_name: spelling_bee_frontend_build_prod
-    working_dir: /app
-    command: sh -c "npm install && npm run build"
-    environment:
-      PUBLIC_API_URL: ""
-    volumes:
-      - ./frontend:/app
-    restart: "no"
-
   nginx:
-    image: nginx:1.27-alpine
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
+      args:
+        PUBLIC_API_URL: ""
     container_name: spelling_bee_nginx_prod
     ports:
-      - "80:80"
-    volumes:
-      - ./nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./frontend/dist:/usr/share/nginx/html:ro
+      - "8090:80"
     depends_on:
       backend:
         condition: service_started
-      frontend-build:
-        condition: service_completed_successfully
     restart: unless-stopped
 
   phpmyadmin:
