@@ -41,10 +41,18 @@ export const wordsAPI = {
   },
 
   // Generate speech audio via backend TTS service
-  textToSpeech: (text, token = '') => {
+  textToSpeech: (text, token = '', options = {}) => {
+    const payload = {
+      text,
+      engine: options.engine,
+      voice: options.voice,
+      speed: options.speed,
+      customUrl: options.customUrl,
+      serviceUrl: options.serviceUrl
+    };
     return api.post(
       '/words/tts',
-      { text },
+      payload,
       {
         headers: tokenHeaders(token),
         responseType: 'blob'

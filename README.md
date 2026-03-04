@@ -124,9 +124,18 @@ Set tokens in `backend/config.json`:
 ```json
 {
   "uploadToken": "your-upload-token",
-  "testToken": "your-test-token"
+  "testToken": "your-test-token",
+  "ttsRequestTimeoutMs": 300000,
+  "ttsRetryWindowMs": 330000,
+  "ttsRetryDelayMs": 1500,
+  "ttsShortRetryWindowMs": 4000
 }
 ```
+
+- `ttsRequestTimeoutMs`: timeout for one backend->TTS HTTP call
+- `ttsRetryWindowMs`: total retry window for default engine URLs
+- `ttsRetryDelayMs`: delay between retries
+- `ttsShortRetryWindowMs`: shorter retry window for user-provided `serviceUrl`
 
 Backend:
 - `DB_HOST` (default: `mysql`)

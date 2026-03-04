@@ -1,6 +1,8 @@
 <script>
 	import { wordsAPI } from '$lib/api';
 	import WordCard from '$lib/components/WordCard.svelte';
+	import { TTS_ENGINES, getTtsSettings, saveTtsSettings } from '$lib/ttsSettings';
+	import { onMount } from 'svelte';
 
 	let loading = false;
 	let error = null;
@@ -22,10 +24,29 @@
 	let questionAnswered = false;
 	let testStarted = false;
 	let testFinished = false;
+	let ttsSettings = getTtsSettings();
+	let ttsSavedNotice = '';
+	let ttsLoaded = false;
 
 	$: totalQuestions = quizWords.length;
 	$: currentQuestionNumber = currentQuestionIndex + 1;
 	$: scorePercent = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
+
+	onMount(() => {
+		ttsSettings = getTtsSettings();
+		ttsLoaded = true;
+	});
+
+	$: needsServiceUrl = ttsSettings.engine !== 'browser';
+	$: needsCustomUrl = ttsSettings.engine === 'custom';
+	$: requiresServiceUrl = ttsSettings.engine === 'kokoro' || ttsSettings.engine === 'coqui' || ttsSettings.engine === 'styletts2';
+	$: if (ttsLoaded) {
+		saveTtsSettings(ttsSettings);
+		ttsSavedNotice = 'Auto-saved';
+		setTimeout(() => {
+			ttsSavedNotice = '';
+		}, 900);
+	}
 
 	function parseTagNames(input) {
 		return [...new Set(
@@ -243,8 +264,51 @@
 <div class="test-page">
 	<div class="header">
 		<h1>Spelling Bee Test</h1>
+		<p class="tts-active">TTS: {ttsSettings.engine}</p>
 		{#if testStarted}
 			<p class="word-count">Question {currentQuestionNumber} / {totalQuestions} | Correct: {correctAnswers}</p>
+		{/if}
+	</div>
+
+	<div class="filter-card">
+		<p class="filter-title">TTS Engine Setup</p>
+		<div class="setup-grid">
+			<label>
+				Engine
+				<select bind:value={ttsSettings.engine}>
+					{#each TTS_ENGINES as engine (engine.id)}
+						<option value={engine.id}>{engine.label}</option>
+					{/each}
+				</select>
+			</label>
+			<label>
+				Voice (optional)
+				<input type="text" placeholder="voice name/id" bind:value={ttsSettings.voice} />
+			</label>
+			<label>
+				Speed
+				<input type="number" min="0.5" max="2" step="0.1" bind:value={ttsSettings.speed} />
+			</label>
+			{#if needsServiceUrl}
+				<label>
+					Service URL {requiresServiceUrl ? '(required)' : '(optional)'}
+					<input type="url" placeholder="http://tts:8000 (Docker) or http://localhost:8000 (local backend)" bind:value={ttsSettings.serviceUrl} />
+				</label>
+			{/if}
+			{#if needsCustomUrl}
+				<label>
+					Custom TTS URL (required for custom)
+					<input type="url" placeholder="http://localhost:8010/tts" bind:value={ttsSettings.customUrl} />
+				</label>
+			{/if}
+		</div>
+		<div class="controls">
+			{#if ttsSavedNotice}
+				<span class="saved-inline">{ttsSavedNotice}</span>
+			{/if}
+		</div>
+		{#if requiresServiceUrl && !ttsSettings.serviceUrl}
+			<p class="filter-hint">Provide Service URL for this engine, for example `http://localhost:8010`.</p>
 		{/if}
 	</div>
 
@@ -328,7 +392,13 @@
 	{/if}
 
 	{#if testStarted && currentWord}
-		<WordCard word={currentWord} testToken={testToken} quizMode={true} on:answerSubmit={handleAnswerSubmit} />
+		<WordCard
+			word={currentWord}
+			testToken={testToken}
+			quizMode={true}
+			ttsSettings={ttsSettings}
+			on:answerSubmit={handleAnswerSubmit}
+		/>
 		<div class="controls">
 			<button class="btn-next" on:click={nextQuestion} disabled={!questionAnswered}>
 				{currentQuestionIndex + 1 >= totalQuestions ? 'Finish Test' : 'Next Question'}
@@ -375,6 +445,12 @@
 		opacity: 0.9;
 	}
 
+	.tts-active {
+		margin: 0 0 0.4rem;
+		font-size: 0.95rem;
+		opacity: 0.9;
+	}
+
 	.filter-card,
 	.loading,
 	.error,
@@ -415,10 +491,18 @@
 	}
 
 	.setup-grid input {
-		max-width: 180px;
+		max-width: 100%;
 		padding: 0.7rem;
 		border: 1px solid #cbd5e0;
 		border-radius: 8px;
+	}
+
+	.setup-grid select {
+		max-width: 100%;
+		padding: 0.7rem;
+		border: 1px solid #cbd5e0;
+		border-radius: 8px;
+		background: #fff;
 	}
 
 	.filter-controls {
@@ -474,6 +558,12 @@
 
 	.controls {
 		margin-top: 1rem;
+	}
+
+	.saved-inline {
+		margin-left: 0.8rem;
+		color: #2f855a;
+		font-weight: 600;
 	}
 
 	.btn-next {

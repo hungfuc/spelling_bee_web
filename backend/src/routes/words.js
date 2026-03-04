@@ -58,18 +58,63 @@ router.get('/random', requireTestToken, async (req, res, next) => {
 router.post('/tts', requireTestToken, async (req, res, next) => {
   try {
     const text = String(req.body?.text || '').trim();
+    const engine = String(req.body?.engine || '').trim().toLowerCase();
+    const voice = String(req.body?.voice || '').trim();
+    const customUrl = String(req.body?.customUrl || '').trim();
+    const serviceUrl = String(req.body?.serviceUrl || '').trim();
+    const speedRaw = req.body?.speed;
+    const speed = Number(speedRaw);
+
     if (!text) {
       return res.status(400).json({ error: 'text is required' });
     }
     if (text.length > 100) {
       return res.status(400).json({ error: 'text is too long' });
     }
+    if (engine && engine.length > 30) {
+      return res.status(400).json({ error: 'engine is invalid' });
+    }
+    if (voice.length > 120) {
+      return res.status(400).json({ error: 'voice is too long' });
+    }
+    if (customUrl.length > 500) {
+      return res.status(400).json({ error: 'customUrl is too long' });
+    }
+    if (serviceUrl.length > 500) {
+      return res.status(400).json({ error: 'serviceUrl is too long' });
+    }
+    if (serviceUrl && !/^https?:\/\//i.test(serviceUrl)) {
+      return res.status(400).json({ error: 'serviceUrl must start with http:// or https://' });
+    }
+    if (speedRaw !== undefined && (!Number.isFinite(speed) || speed < 0.5 || speed > 2)) {
+      return res.status(400).json({ error: 'speed must be between 0.5 and 2' });
+    }
 
-    const { buffer, contentType } = await synthesizeSpeech(text);
+    const { buffer, contentType } = await synthesizeSpeech(text, {
+      engine,
+      voice,
+      speed,
+      customUrl,
+      serviceUrl
+    });
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'no-store');
     res.send(buffer);
   } catch (error) {
+    if (
+      error.message?.includes('not configured') ||
+      error.message?.includes('customUrl is required') ||
+      error.message?.includes('serviceUrl') ||
+      error.message?.includes('localhost is invalid')
+    ) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.message?.includes('client-side')) {
+      return res.status(400).json({ error: 'browser engine is only available in browser mode' });
+    }
+    if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNABORTED'].includes(error.code)) {
+      return res.status(503).json({ error: 'TTS service is unavailable or still warming up. Please retry shortly.' });
+    }
     if (error.response?.status === 400) {
       return res.status(400).json({ error: 'Invalid TTS request' });
     }

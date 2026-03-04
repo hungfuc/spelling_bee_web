@@ -4,7 +4,11 @@ const path = require('path');
 const CONFIG_FILE = path.resolve(__dirname, '../../config.json');
 const DEFAULT_CONFIG = {
   uploadToken: '',
-  testToken: ''
+  testToken: '',
+  ttsRequestTimeoutMs: 300000,
+  ttsRetryWindowMs: 330000,
+  ttsRetryDelayMs: 1500,
+  ttsShortRetryWindowMs: 4000
 };
 
 function loadConfig() {

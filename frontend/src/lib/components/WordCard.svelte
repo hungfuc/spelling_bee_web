@@ -1,10 +1,12 @@
 <script>
 	import { createEventDispatcher } from 'svelte';
 	import { wordsAPI } from '$lib/api';
+	import { DEFAULT_TTS_SETTINGS } from '$lib/ttsSettings';
 
 	export let word = null;
 	export let testToken = '';
 	export let quizMode = false;
+	export let ttsSettings = DEFAULT_TTS_SETTINGS;
 
 	let flipped = false;
 	let showingMeaning = false;
@@ -13,27 +15,84 @@
 	let speaking = false;
 	let activeAudioUrl = null;
 	let activeAudio = null;
+	let activeUtterance = null;
 	let answerInput = '';
 	let answerResult = null;
 	let answerSubmitted = false;
 	const dispatch = createEventDispatcher();
 
+	function normalizedTtsSettings() {
+		const source = ttsSettings && typeof ttsSettings === 'object' ? ttsSettings : {};
+		return {
+			engine: String(source.engine || DEFAULT_TTS_SETTINGS.engine).toLowerCase(),
+			voice: String(source.voice || '').trim(),
+			speed: Number(source.speed) || 1,
+			customUrl: String(source.customUrl || '').trim(),
+			serviceUrl: String(source.serviceUrl || '').trim()
+		};
+	}
+
+	function requiresDedicatedServiceUrl(engine) {
+		return engine === 'kokoro' || engine === 'coqui' || engine === 'styletts2';
+	}
+
+	async function speakWithBrowser(text, options) {
+		if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+			throw new Error('Browser speech synthesis is not supported');
+		}
+
+		window.speechSynthesis.cancel();
+
+		return new Promise((resolve, reject) => {
+			const utterance = new SpeechSynthesisUtterance(text);
+			utterance.rate = Math.min(2, Math.max(0.5, Number(options.speed) || 1));
+
+			if (options.voice) {
+				const selectedVoice = window.speechSynthesis
+					.getVoices()
+					.find((voice) => voice.name.toLowerCase() === options.voice.toLowerCase());
+				if (selectedVoice) {
+					utterance.voice = selectedVoice;
+				}
+			}
+
+			activeUtterance = utterance;
+			utterance.onend = () => {
+				activeUtterance = null;
+				resolve();
+			};
+			utterance.onerror = (event) => {
+				activeUtterance = null;
+				reject(new Error(event.error || 'speech_error'));
+			};
+
+			window.speechSynthesis.speak(utterance);
+		});
+	}
+
 	async function speak() {
 		if (!word || !word.word) return;
-		if (!testToken.trim()) {
-			alert('Missing test token for speech');
-			return;
-		}
 
 		if (speaking) {
 			return;
 		}
 
+		const settings = normalizedTtsSettings();
+		if (requiresDedicatedServiceUrl(settings.engine) && !settings.serviceUrl) {
+			alert(`Set Service URL for ${settings.engine} in Test page TTS setup`);
+			return;
+		}
+		if (settings.engine === 'custom' && !settings.customUrl) {
+			alert('Set Custom TTS URL in Test page TTS setup');
+			return;
+		}
+		if (settings.engine !== 'browser' && !testToken.trim()) {
+			alert('Missing test token for speech');
+			return;
+		}
+
 		speaking = true;
 		try {
-			const response = await wordsAPI.textToSpeech(word.word, testToken);
-			const blob = new Blob([response.data], { type: response.data?.type || 'audio/wav' });
-
 			if (activeAudio) {
 				activeAudio.pause();
 				activeAudio = null;
@@ -42,16 +101,33 @@
 				URL.revokeObjectURL(activeAudioUrl);
 				activeAudioUrl = null;
 			}
+			if (activeUtterance && typeof window !== 'undefined' && window.speechSynthesis) {
+				window.speechSynthesis.cancel();
+				activeUtterance = null;
+			}
 
+			if (settings.engine === 'browser') {
+				await speakWithBrowser(word.word, settings);
+				speaking = false;
+				return;
+			}
+
+			const response = await wordsAPI.textToSpeech(word.word, testToken, settings);
+			const contentType = response.headers?.['content-type'] || 'audio/wav';
+			const blob = new Blob([response.data], { type: contentType });
 			activeAudioUrl = URL.createObjectURL(blob);
 			activeAudio = new Audio(activeAudioUrl);
 			activeAudio.onended = () => {
 				speaking = false;
 			};
+			activeAudio.onerror = () => {
+				speaking = false;
+			};
 			await activeAudio.play();
 		} catch (error) {
 			speaking = false;
-			alert('Failed to play pronunciation audio');
+			const backendError = error?.response?.data?.error;
+			alert(backendError || 'Failed to play pronunciation audio');
 		}
 	}
 
@@ -131,6 +207,10 @@
 		if (activeAudioUrl) {
 			URL.revokeObjectURL(activeAudioUrl);
 			activeAudioUrl = null;
+		}
+		if (activeUtterance && typeof window !== 'undefined' && window.speechSynthesis) {
+			window.speechSynthesis.cancel();
+			activeUtterance = null;
 		}
 	}
 

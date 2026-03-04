@@ -25,6 +25,7 @@ LANGUAGE = os.getenv("MELO_LANGUAGE", "EN")
 SPEAKER = os.getenv("MELO_SPEAKER", "EN-US")
 SPEED = float(os.getenv("MELO_SPEED", "1.0"))
 DEVICE = os.getenv("MELO_DEVICE", "cpu")
+WARMUP_ON_STARTUP = os.getenv("TTS_WARMUP_ON_STARTUP", "false").lower() == "true"
 
 tts_model = None
 speaker_id = None
@@ -57,7 +58,9 @@ def warmup_synthesis():
 
 @app.on_event("startup")
 def startup_event():
-    warmup_synthesis()
+    # Keep startup fast; heavy synthesis warmup can block service readiness for minutes.
+    if WARMUP_ON_STARTUP:
+        warmup_synthesis()
 
 
 @app.get("/health")
