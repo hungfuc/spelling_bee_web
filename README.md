@@ -94,15 +94,22 @@ record at the server and make sure inbound ports 80 and 443 are open. Then run:
 
 ```bash
 chmod +x setup-domain.sh
-sudo CERTBOT_EMAIL=admin@example.com ./setup-domain.sh
+sudo ./setup-domain.sh
 ```
 
-The script enables `spelling.link-dynamic.com`, proxies it to the production
-frontend on port 8090, obtains a Let's Encrypt certificate over HTTP, and then
-enables HTTPS. It deliberately installs the TLS configuration only after the
-certificate exists.
+The script prompts for the domain and Let's Encrypt email address, proxies the
+domain to the production frontend on port 8090, obtains a certificate over
+HTTP, and then enables HTTPS. It deliberately installs the TLS configuration
+only after the certificate exists. It also installs Nginx, Certbot, and the
+Certbot Nginx plugin when they are missing on a Debian/Ubuntu host.
 
 Override the defaults when needed:
+
+```bash
+sudo ./setup-domain.sh spelling.example.com admin@example.com
+```
+
+Environment variables are also supported for non-interactive use:
 
 ```bash
 sudo DOMAIN=spelling.example.com UPSTREAM_PORT=8080 \

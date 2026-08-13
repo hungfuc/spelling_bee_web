@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DOMAIN=${DOMAIN:-spelling.link-dynamic.com}
+DOMAIN=${DOMAIN:-${1:-}}
 UPSTREAM_PORT=${UPSTREAM_PORT:-8090}
-CERTBOT_EMAIL=${CERTBOT_EMAIL:-}
+CERTBOT_EMAIL=${CERTBOT_EMAIL:-${2:-}}
 NGINX_SITES_AVAILABLE=${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}
 NGINX_SITES_ENABLED=${NGINX_SITES_ENABLED:-/etc/nginx/sites-enabled}
 CERTBOT_WEBROOT=${CERTBOT_WEBROOT:-/var/www/certbot}
@@ -13,14 +13,31 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
+if [ -z "${DOMAIN}" ]; then
+  if [ ! -t 0 ]; then
+    echo "DOMAIN is required when running non-interactively."
+    exit 1
+  fi
+
+  read -r -p "Domain name (for example, spelling.link-dynamic.com): " DOMAIN
+fi
+
 if [ -z "${CERTBOT_EMAIL}" ]; then
-  echo "CERTBOT_EMAIL is required for Let's Encrypt registration and expiry notices."
-  echo "Example: sudo CERTBOT_EMAIL=admin@example.com ./setup-domain.sh"
+  if [ ! -t 0 ]; then
+    echo "CERTBOT_EMAIL is required when running non-interactively."
+    exit 1
+  fi
+
+  read -r -p "Email for Let's Encrypt registration and expiry notices: " CERTBOT_EMAIL
+fi
+
+if [[ -z "${DOMAIN}" || ! "${DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "Invalid DOMAIN: ${DOMAIN}"
   exit 1
 fi
 
-if [[ ! "${DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]]; then
-  echo "Invalid DOMAIN: ${DOMAIN}"
+if [[ ! "${CERTBOT_EMAIL}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+  echo "Invalid CERTBOT_EMAIL: ${CERTBOT_EMAIL}"
   exit 1
 fi
 
@@ -31,9 +48,17 @@ if [[ ! "${UPSTREAM_PORT}" =~ ^[0-9]+$ ]] ||
 fi
 
 NEEDS_PACKAGES=0
-if ! command -v nginx >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1; then
+
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "Nginx is not installed."
+  NEEDS_PACKAGES=1
+fi
+
+if ! command -v certbot >/dev/null 2>&1; then
+  echo "Certbot is not installed."
   NEEDS_PACKAGES=1
 elif ! certbot plugins 2>/dev/null | grep -q '^[[:space:]]*\* nginx'; then
+  echo "The Certbot nginx plugin is not installed."
   NEEDS_PACKAGES=1
 fi
 
