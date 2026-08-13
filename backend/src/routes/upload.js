@@ -14,7 +14,11 @@ const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     // Accept text files
-    if (file.mimetype === 'text/plain' || file.originalname.endsWith('.txt')) {
+    if (
+      file.mimetype === 'text/plain' ||
+      file.originalname.endsWith('.txt') ||
+      file.originalname.endsWith('.text')
+    ) {
       cb(null, true);
     } else {
       cb(new Error('Only text files are allowed'));

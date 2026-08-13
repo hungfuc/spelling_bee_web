@@ -151,7 +151,21 @@ server {
 
 ## Token Configuration
 
-Set tokens in `backend/config.json`:
+Create `backend/config.json` interactively and generate secure tokens by
+leaving both prompts blank:
+
+```bash
+chmod +x setup-config.sh
+./setup-config.sh
+```
+
+You can alternatively pass tokens as arguments:
+
+```bash
+./setup-config.sh my-upload-token my-test-token
+```
+
+The generated file has this structure:
 
 ```json
 {
@@ -163,6 +177,15 @@ Set tokens in `backend/config.json`:
   "ttsShortRetryWindowMs": 4000
 }
 ```
+
+The upload token is entered in the upload page. The test token is entered on
+the test page. After changing tokens in production, rebuild the backend:
+
+```bash
+docker compose -f docker-compose.prod.yml -p spelling_bee_prod up -d --build backend
+```
+
+An upload-ready spelling list is provided in `example.text`.
 
 - `ttsRequestTimeoutMs`: timeout for one backend->TTS HTTP call
 - `ttsRetryWindowMs`: total retry window for default engine URLs

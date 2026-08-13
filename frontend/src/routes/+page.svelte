@@ -83,7 +83,7 @@
 		<div class="upload-section">
 			<input
 				type="file"
-				accept=".txt,text/plain"
+				accept=".txt,.text,text/plain"
 				bind:this={fileInput}
 				on:change={handleFileSelect}
 				disabled={uploading}
