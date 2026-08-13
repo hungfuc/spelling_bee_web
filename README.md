@@ -73,7 +73,7 @@ docker compose up --build
 Use the production compose file with compiled frontend assets:
 
 ```bash
-docker compose -f docker-compose-prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 Or run the deployment script:
@@ -86,6 +86,31 @@ Production ports:
 - Frontend Nginx: http://localhost:8090
 - phpMyAdmin: http://localhost:8091
 - MySQL: localhost:3366
+
+### Public domain and HTTPS
+
+After the production containers are running, point the domain's DNS A/AAAA
+record at the server and make sure inbound ports 80 and 443 are open. Then run:
+
+```bash
+chmod +x setup-domain.sh
+sudo CERTBOT_EMAIL=admin@example.com ./setup-domain.sh
+```
+
+The script enables `spelling.link-dynamic.com`, proxies it to the production
+frontend on port 8090, obtains a Let's Encrypt certificate over HTTP, and then
+enables HTTPS. It deliberately installs the TLS configuration only after the
+certificate exists.
+
+Override the defaults when needed:
+
+```bash
+sudo DOMAIN=spelling.example.com UPSTREAM_PORT=8080 \
+  CERTBOT_EMAIL=admin@example.com ./setup-domain.sh
+```
+
+Use `CERTBOT_STAGING=1` while testing repeated certificate requests to avoid
+Let's Encrypt production rate limits.
 
 ## Production Nginx Config
 
